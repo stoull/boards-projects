@@ -7,6 +7,9 @@
 Secret.h
 secret.py
 
+# Arduino's third parts libraries
+libraries/
+
 
 ### macOS ###
 # General
