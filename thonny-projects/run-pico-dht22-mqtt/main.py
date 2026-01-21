@@ -16,7 +16,7 @@ from system_monitor import SystemMonitor
 
 from hardware_info_helper import get_device_info_all
 
-from config import (
+from secret import (
     WIFI_SSID,
     WIFI_PASSWORD,
     MQTT_HOST,
@@ -31,7 +31,8 @@ from config import (
 
 # ==================== 配置常量 ====================
 # 硬件配置
-DHT22_PIN = 2           # DHT22 数据引脚
+DHT22_PIN = 15           # DHT22 数据引脚
+DHT22_POWER_PIN = 14    # DHT22 电源引脚，可用于代码上电，如果物理上电，则则为None，或者不传
 LED_PIN = "LED"         # 板载 LED
 
 # 时区配置
@@ -47,7 +48,7 @@ LOG_MAX_SIZE = 20480  # 20KB
 # 看门狗配置
 WATCHDOG_TIMEOUT = 8000  # 看门狗超时时间（毫秒），8秒 最大8388ms
 WATCHDOG_ENABLED = False   # 是否启用看门狗
-MAX_CONSECUTIVE_ERRORS = 5  # 最大连续错误次数，超过后触发硬重启
+MAX_CONSECUTIVE_ERRORS = 3  # 最大连续错误次数，超过后触发硬重启
 
 
 # ==================== 全局变量 ====================
@@ -61,6 +62,21 @@ system_monitor = None  # 系统状态监控器
 consecutive_errors = 0  # 连续错误计数
 
 
+def get_local_timestamp():
+    try:
+        t = time.localtime()
+        return "{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(
+            t[1], t[2], t[3], t[4], t[5]  # MM-DD HH:MM:SS
+        )
+    except:
+        return ""
+
+def reboot_machine():
+    # 清理所有资源（网络、传感器等）
+    cleanup_all_resources()
+    machine.reset()
+    
+        
 # ==================== 初始化模块 ====================
 def initialize_logger():
     """初始化日志系统"""
@@ -96,10 +112,10 @@ def initialize_network():
 def initialize_sensor():
     """初始化传感器"""
     global sensor
-    
     logger = get_logger()
     sensor = DHT22Sensor(
         data_pin=DHT22_PIN,
+        power_pin=DHT22_POWER_PIN,
         led_pin=LED_PIN,
         logger=logger
     )
@@ -188,6 +204,7 @@ def cleanup_all_resources():
     # 清理传感器
     if sensor:
         try:
+            sensor.deep_recovery()
             sensor.cleanup()
             sensor = None
         except Exception as e:
@@ -284,7 +301,11 @@ def publish_device_info_data():
     
     try:
         # 构造数据包
-        d_info["created_at"] = time_sync.get_iso8601_time_with_timezone()
+        if time_sync:
+            d_info["created_at"] = time_sync.get_iso8601_time_with_timezone()
+        else:
+            d_info["created_at"] = get_local_timestamp()
+            
         # 在发布前喂狗
         feed_watchdog()
         
@@ -379,7 +400,8 @@ def start_main_loop():
                 
                 # 检查是否达到最大连续错误次数
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                    log_error(f"连续错误次数达到 {MAX_CONSECUTIVE_ERRORS} 次，触发设备重启")
+                    loop_success = False
+                    log_error(f"连续错误次数达到 {MAX_CONSECUTIVE_ERRORS} 次，触发设备重启0")
                     time.sleep(2)  # 等待日志写入
                     # 停止喂狗，让看门狗触发重启
                     if WATCHDOG_ENABLED:
@@ -387,7 +409,7 @@ def start_main_loop():
                         while True:
                             time.sleep(1)  # 等待看门狗触发
                     else:
-                        machine.reset()
+                        reboot_machine()
                 
                 # 每 10 次循环显示一次统计信息
                 if loop_count % 10 == 0:
@@ -412,13 +434,16 @@ def start_main_loop():
                 
                 # 检查是否需要硬重启
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                    log_error(f"连续错误次数达到 {MAX_CONSECUTIVE_ERRORS} 次，触发设备重启")
+                    loop_success = False
+                    log_error(f"连续错误次数达到 {MAX_CONSECUTIVE_ERRORS} 次，触发设备重启1")
                     time.sleep(2)
                     # 停止喂狗，让看门狗触发重启
                     if WATCHDOG_ENABLED:
                         log_info("停止喂狗，等待看门狗重启设备...")
                         while True:
                             time.sleep(1)
+                    else:
+                        reboot_machine()
             
             # 喂狗 - 循环结束前
             feed_watchdog()
@@ -434,7 +459,7 @@ def start_main_loop():
                     feed_watchdog()  # 在等待期间定期喂狗
                     remaining_time -= sleep_time
             else:
-                if is_wifi_connected:
+                if is_wifi_connected and loop_success:
                     log_info(f"等待 {SAMPLE_INTERVAL} 秒...")
                     time.sleep(SAMPLE_INTERVAL)
                 else:
@@ -474,7 +499,7 @@ def start_main_loop():
             system_monitor.log_status(detailed=True)
         
         # 清理所有资源（网络、传感器等）
-        cleanup_all_resources()
+        # cleanup_all_resources()
         
         # 等待看门狗重启设备
         if WATCHDOG_ENABLED:
@@ -506,11 +531,15 @@ def main():
     
     # 3. 初始化网络连接
     if not initialize_network():
-        log_error("网络初始化失败，停止喂狗等待重启")
+        log_error("网络初始化失败")
         if WATCHDOG_ENABLED:
             while True:
                 time.sleep(1)  # 等待看门狗触发重启
-
+        else:
+            log_error("6秒后重启")
+            time.sleep(6)
+            reboot_machine()
+            
     # 3.1 更新日志文件名
     update_logger_filename_with_date()
      

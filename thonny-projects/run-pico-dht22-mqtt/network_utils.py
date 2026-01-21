@@ -22,7 +22,7 @@ class WiFiManager:
         self.password = password
         self.wlan = None
     
-    def connect(self, timeout=30, watchdog_feed_callback=None):
+    def connect(self, timeout=120, watchdog_feed_callback=None):
         """
         连接到 WiFi 网络
         
@@ -33,6 +33,7 @@ class WiFiManager:
         Returns:
             bool:  连接成功返回 True，失败返回 False
         """
+        print(f"启动 WiFi 连接程序到 {self.ssid}")
         try:
             self.wlan = network.WLAN(network.STA_IF)
             self.wlan.config(pm=network.WLAN.PM_NONE)  # 禁用电源管理
@@ -59,7 +60,7 @@ class WiFiManager:
                     watchdog_feed_callback()
                 
                 print("等待连接...")
-                time.sleep(1)
+                time.sleep(2)
             
             # 连接成功
             ip_address = self.wlan.ifconfig()[0]
@@ -329,7 +330,7 @@ class NTPTimeSync:
 
 # ==================== 便捷函数 ====================
 
-def quick_connect_wifi(ssid, password, timeout=30):
+def quick_connect_wifi(ssid, password, timeout=120):
     """
     快速连接 WiFi（便捷函数）
     

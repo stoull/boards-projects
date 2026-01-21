@@ -12,10 +12,10 @@ class DHT22Sensor:
     """DHT22 温湿度传感器类"""
     
     # 数据平滑处理常量
-    MAX_CHANGE_THRESHOLD = 3.0  # 最大变化阈值（±3）
+    MAX_CHANGE_THRESHOLD = 20.0  # 最大变化阈值（±3）
     MAX_ANOMALY_COUNT = 3       # 最大异常数据次数
     
-    def __init__(self, data_pin, led_pin=None, logger=None):
+    def __init__(self, data_pin, power_pin=None, led_pin=None, logger=None):
         """
         初始化 DHT22 传感器
         
@@ -25,7 +25,15 @@ class DHT22Sensor:
             logger: 日志记录器（可选）
         """
         # 先创建带上拉的 Pin 对象
-        pin_t = Pin(data_pin, Pin.IN, Pin.PULL_UP)
+        # pin_t = Pin(data_pin, Pin.IN, Pin.PULL_UP)
+        self.data_pin = data_pin
+        self.power_pin = power_pin
+        if power_pin:
+            power = Pin(power_pin, Pin.OUT)
+            power.value(1)  # 上电
+            print("上电完成")
+            
+        pin_t = Pin(data_pin, Pin.OUT)
         self.sensor = dht.DHT22(pin_t)
         self.led = Pin(led_pin, Pin.OUT) if led_pin else None
         self.logger = logger
@@ -279,6 +287,30 @@ class DHT22Sensor:
             print("DHT22 传感器资源已清理")
         except Exception as e:
             print(f"DHT22 清理异常: {e}")
+            
+
+    def deep_recovery(self):
+        if self.data_pin and self.power_pin:
+            """
+            对 DHT22 进行真正的“软件断电复位”
+            """
+            # 1. DATA 先变成输入，避免反向供电
+            data = Pin(self.data_pin, Pin.IN)
+
+            # 2. 切断电源
+            power = Pin(self.power_pin, Pin.OUT)
+            power.value(0)
+            time.sleep(3)   # 一定要 >= 2 秒
+
+            # 3. 重新上电
+            power.value(1)
+            time.sleep(3) # DHT22 初始化时间
+            
+            pin_t = Pin(self.data_pin)
+            # 4. 重新创建传感器对象
+            self.sensor = dht.DHT22(pin_t)
+            print("DHT22 软件断电复位完成")
+            
 
 
 # ==================== 兼容旧代码的简单函数 ====================
@@ -326,4 +358,3 @@ def get_sensor():
         DHT22Sensor: 传感器实例
     """
     return _global_sensor
-

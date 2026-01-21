@@ -13,7 +13,9 @@ MQTTClientManager::MQTTClientManager(const char* clientId, const char* server, u
     _clientId = _strdup(clientId);
     _server = _strdup(server);
     _mqttClient = new PubSubClient(_wifiClient);
+    _mqttClient->setBufferSize(1024);
     _mqttClient->setServer(_server, _port);
+    _mqttClient->setSocketTimeout(120);
 }
 
 // 析构函数
@@ -126,7 +128,7 @@ bool MQTTClientManager::publish(const char* topic, const char* message, uint8_t 
     if (success) {
         _publishCount++;
         
-        char logMsg[512];
+        char logMsg[1024];
         snprintf(logMsg, sizeof(logMsg), "MQTT 消息已发布到 %s: %s", topic, message);
         _log(logMsg);
         return true;

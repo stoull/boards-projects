@@ -81,7 +81,7 @@ class SimpleLogger:
                 # 重写文件
                 with open(self.filename, "w") as f:
                     f.write("=== 日志文件已修剪（删除最旧的日志） ===\n")
-                    f.writelines(kept_lines)
+                    f.write(kept_lines)
                 
                 print(f"日志已修剪：保留 {len(kept_lines)}/{total_lines} 行")
         except Exception as e:
