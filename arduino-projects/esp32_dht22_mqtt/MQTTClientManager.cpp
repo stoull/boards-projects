@@ -15,7 +15,8 @@ MQTTClientManager::MQTTClientManager(const char* clientId, const char* server, u
     _mqttClient = new PubSubClient(_wifiClient);
     _mqttClient->setBufferSize(1024);
     _mqttClient->setServer(_server, _port);
-    _mqttClient->setSocketTimeout(120);
+    _mqttClient->setSocketTimeout(15);  // 减少超时时间到15秒
+    _mqttClient->setKeepAlive(60);      // 设置keepAlive为60秒
 }
 
 // 析构函数
@@ -49,6 +50,12 @@ void MQTTClientManager::setLogEnabled(bool enabled) {
 
 // 连接到MQTT服务器
 bool MQTTClientManager::connect(uint8_t retryCount, WatchdogFeedCallback watchdogCallback) {
+    // 确保WiFiClient完全断开旧连接
+    if (_wifiClient.connected()) {
+        _wifiClient.stop();
+        delay(100);
+    }
+    
     for (uint8_t attempt = 0; attempt < retryCount; attempt++) {
         // 喂狗（如果提供了回调函数）
         if (watchdogCallback) {
@@ -58,6 +65,13 @@ bool MQTTClientManager::connect(uint8_t retryCount, WatchdogFeedCallback watchdo
         // 如果已经连接，先断开
         if (_mqttClient->connected()) {
             _mqttClient->disconnect();
+            delay(100);
+        }
+        
+        // 检查WiFi状态
+        if (WiFi.status() != WL_CONNECTED) {
+            _log("WiFi未连接，无法连接MQTT", true);
+            return false;
         }
         
         // 尝试连接
@@ -78,11 +92,25 @@ bool MQTTClientManager::connect(uint8_t retryCount, WatchdogFeedCallback watchdo
             return true;
         } else {
             _errorCount++;
+            int state = _mqttClient->state();
             
             char errorMsg[256];
+            const char* stateStr = "未知错误";
+            switch(state) {
+                case -4: stateStr = "MQTT_CONNECTION_TIMEOUT"; break;
+                case -3: stateStr = "MQTT_CONNECTION_LOST"; break;
+                case -2: stateStr = "MQTT_CONNECT_FAILED (TCP连接失败)"; break;
+                case -1: stateStr = "MQTT_DISCONNECTED"; break;
+                case 1: stateStr = "MQTT_CONNECT_BAD_PROTOCOL"; break;
+                case 2: stateStr = "MQTT_CONNECT_BAD_CLIENT_ID"; break;
+                case 3: stateStr = "MQTT_CONNECT_UNAVAILABLE"; break;
+                case 4: stateStr = "MQTT_CONNECT_BAD_CREDENTIALS"; break;
+                case 5: stateStr = "MQTT_CONNECT_UNAUTHORIZED"; break;
+            }
+            
             snprintf(errorMsg, sizeof(errorMsg), 
-                     "MQTT 连接失败 (尝试 %d/%d): 错误代码 %d", 
-                     attempt + 1, retryCount, _mqttClient->state());
+                     "MQTT 连接失败 (尝试 %d/%d): 错误代码 %d (%s)", 
+                     attempt + 1, retryCount, state, stateStr);
             
             if (attempt == retryCount - 1) {
                 _log(errorMsg, true);
@@ -92,7 +120,7 @@ bool MQTTClientManager::connect(uint8_t retryCount, WatchdogFeedCallback watchdo
                 _log(errorMsg);
             }
             
-            delay(1000); // 重试前等待1秒
+            delay(2000); // 重试前等待2秒
         }
     }
     
@@ -228,6 +256,11 @@ void MQTTClientManager::cleanup() {
         }
         delete _mqttClient;
         _mqttClient = nullptr;
+    }
+    
+    // 确保WiFiClient完全断开
+    if (_wifiClient.connected()) {
+        _wifiClient.stop();
     }
     
     if (_clientId) {

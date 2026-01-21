@@ -89,19 +89,23 @@ void loop() {
         
         // 检查MQTT连接
         if (mqttManager && !mqttManager->isConnected()) {
-          Serial.println("MQTT 断开，重新创建...");
-          delete mqttManager;
-          if (!setupMqttManager()) {
-            return;
+          Serial.println("MQTT 断开，尝试重连...");
+          if (mqttManager->reconnect(3)) {
+            ledState = true;
+            Serial.println("MQTT重新连接成功");
+          } else {
+            ledState = false;
+            Serial.println("MQTT重新连接失败，将在下次循环重试");
+            // 如果reconnect失败，尝试重新创建（作为最后手段）
+            Serial.println("尝试重新创建MQTT客户端...");
+            delete mqttManager;
+            mqttManager = nullptr;
+            delay(1000);
+            if (!setupMqttManager()) {
+              Serial.println("重新创建MQTT客户端失败，将在下次循环重试");
+              return;
+            }
           }
-          // Serial.println("MQTT 断开，尝试重连...");
-          // if (mqttManager->reconnect(3)) {
-          //   ledState = true;
-          //   Serial.println("MQTT重新连接成功");
-          // } else {
-          //   ledState = false;
-          //   Serial.println("MQTT重新连接失败");
-          // }
           delay(500);
         }
         
