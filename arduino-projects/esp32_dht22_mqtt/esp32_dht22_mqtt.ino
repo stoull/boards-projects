@@ -42,15 +42,18 @@ void setup() {
   Serial.println("   ESP32-C3 DHT22 MQTT System Starting  ");
   Serial.println("========================================");
   
-  // 依次初始化各个模块
+  // 仅初始化必要的模块
   setupLED();
   setupDHT22();
-  setupWifiManager();
-  setupMqttManager();
   
   Serial.println("========================================");
   Serial.println("   System Initialized Successfully!     ");
+  Serial.println("   工作模式: 定时连接模式");
+  Serial.println("   采集间隔: " + String(READ_INTERVAL/1000) + " 秒");
   Serial.println("========================================\n");
+  
+  Serial.println("提示: WiFi 和 MQTT 将在每次数据采集时");
+  Serial.println("      按需连接和断开，以节省电量。\n");
 }
 
 void loop() {
@@ -60,66 +63,99 @@ void loop() {
     if (lastReadTime == 0 || currentTime - lastReadTime >= READ_INTERVAL) {
         lastReadTime = currentTime;
 
-        // 检查WiFi连接
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("WiFi 断开，尝试重连...");
-            WiFi.reconnect();
-            delay(5000);
-            return;
-        }
-
-        if (wifiManager && !wifiManager->isConnected()) {
-            Serial.println("连接丢失，尝试重新连接...");
-            if (wifiManager->connect(30, 3, 5000)) {
-              Serial.println("Wifi重新连接成功");
-              ledState = true;
-              NetworkInfo info = wifiManager->getNetworkInfo();
-              Serial.println("WiFi连接正常，IP: " + info.ip + 
-                        ", 信号: " + String(info.rssi) + " dBm");
-            } else {
-              ledState = false;
-              Serial.println("Wifi重新连接失败");
-              return;
-            }
-        } else if (wifiManager) {
-            NetworkInfo info = wifiManager->getNetworkInfo();
-            Serial.println("WiFi连接正常，IP: " + info.ip + 
-                          ", 信号: " + String(info.rssi) + " dBm");
-        }
+        Serial.println("========================================");
+        Serial.println("   开始新的数据采集周期");
+        Serial.println("========================================");
         
-        // 检查MQTT连接
-        if (mqttManager && !mqttManager->isConnected()) {
-          Serial.println("MQTT 断开，尝试重连...");
-          if (mqttManager->reconnect(3)) {
-            ledState = true;
-            Serial.println("MQTT重新连接成功");
-          } else {
-            ledState = false;
-            Serial.println("MQTT重新连接失败，将在下次循环重试");
-            // 如果reconnect失败，尝试重新创建（作为最后手段）
-            Serial.println("尝试重新创建MQTT客户端...");
+        // ========== 1. 断开现有连接，释放资源 ==========
+        Serial.println("\n【1/5】清理现有连接...");
+        if (mqttManager) {
+            Serial.println("  断开 MQTT 连接...");
+            mqttManager->disconnect();
             delete mqttManager;
             mqttManager = nullptr;
-            delay(1000);
-            if (!setupMqttManager()) {
-              Serial.println("重新创建MQTT客户端失败，将在下次循环重试");
-              return;
-            }
-          }
-          delay(500);
+            Serial.println("  ✓ MQTT 资源已释放");
         }
         
-        // 处理MQTT消息（必须调用）
-        if (mqttManager) {
-            mqttManager->loop();
+        if (wifiManager) {
+            Serial.println("  断开 WiFi 连接...");
+            wifiManager->disconnect();
+            delete wifiManager;
+            wifiManager = nullptr;
+            Serial.println("  ✓ WiFi 资源已释放");
         }
         
+        if (ntpSync) {
+            delete ntpSync;
+            ntpSync = nullptr;
+            Serial.println("  ✓ NTP 资源已释放");
+        }
         
+        WiFi.disconnect(true);  // 完全断开WiFi
+        delay(500);
+        Serial.println("  ✓ 清理完成\n");
+        
+        // ========== 2. 重新连接 WiFi ==========
+        Serial.println("【2/5】重新连接 WiFi...");
+        wifiManager = new WiFiManager(WIFI_SSID, WIFI_PASSWORD);
+        wifiManager->setLogCallback([](const String& msg) {
+            Serial.println("[WiFi] " + msg);
+        });
+        
+        if (!wifiManager->connect(30, 3, 5000)) {
+            Serial.println("✗ WiFi 连接失败，跳过本次数据采集");
+            ledState = false;
+            delete wifiManager;
+            wifiManager = nullptr;
+            return;
+        }
+        
+        Serial.println("✓ WiFi 连接成功");
+        ledState = true;
+        NetworkInfo info = wifiManager->getNetworkInfo();
+        Serial.println("  IP: " + info.ip + ", 信号: " + String(info.rssi) + " dBm\n");
+        
+        // ========== 3. 同步时间 ==========
+        Serial.println("【3/5】同步网络时间...");
+        ntpSync = new NTPTimeSync(8);
+        ntpSync->setLogCallback([](const String& msg) {
+            Serial.println("[NTP] " + msg);
+        });
+        
+        if (ntpSync->sync("ntp.aliyun.com", 3)) {
+            Serial.println("✓ 时间同步成功: " + NTPTimeSync::getISO8601TimeWithTimezone(8) + "\n");
+        } else {
+            Serial.println("✗ 时间同步失败（使用系统时间）\n");
+        }
+        
+        // ========== 4. 重新连接 MQTT ==========
+        Serial.println("【4/5】重新连接 MQTT...");
+        mqttManager = new MQTTClientManager(MQTT_CLIENT_ID, MQTT_SERVER, MQTT_PORT);
+        mqttManager->setAuth(MQTT_USER, MQTT_PASSWORD);
+        
+        if (!mqttManager->connect(3)) {
+            Serial.println("✗ MQTT 连接失败，跳过本次数据采集");
+            ledState = false;
+            
+            // 清理资源
+            delete mqttManager;
+            mqttManager = nullptr;
+            delete ntpSync;
+            ntpSync = nullptr;
+            wifiManager->disconnect();
+            delete wifiManager;
+            wifiManager = nullptr;
+            WiFi.disconnect(true);
+            return;
+        }
+        
+        Serial.println("✓ MQTT 连接成功\n");
+        
+        // ========== 5. 读取传感器并发布数据 ==========
+        Serial.println("【5/5】读取传感器数据并发布...");
         Serial.println("----------------------------------------");
-        Serial.println("开始读取 DHT22 传感器数据...");
         
         // 读取传感器数据
-        // 参数: read(重试次数, 重试延迟ms, 看门狗回调函数)
         if (dhtSensor->read(3, 2000)) {
             // 读取成功，获取数据
             float temperature = dhtSensor->getTemperature();
@@ -134,12 +170,22 @@ void loop() {
             dth22_doc["humidity"] = humidity;
             String iso8601 = NTPTimeSync::getISO8601TimeWithTimezone(8);
             dth22_doc["created_at"] = iso8601;
-            mqttManager->publishJson(MQTT_TOPIC, dth22_doc);
+            
+            if (mqttManager->publishJson(MQTT_TOPIC, dth22_doc)) {
+                Serial.println("✓ DHT22 数据已发布");
+            } else {
+                Serial.println("✗ DHT22 数据发布失败");
+            }
 
             // 发布Device info JSON消息
             StaticJsonDocument<1024> all_dev_info = all_device_info();
             all_dev_info["created_at"] = iso8601;
-            mqttManager->publishJson(MQTT_TOPIC_DeviceInfo, all_dev_info);
+            
+            if (mqttManager->publishJson(MQTT_TOPIC_DeviceInfo, all_dev_info)) {
+                Serial.println("✓ 设备信息已发布");
+            } else {
+                Serial.println("✗ 设备信息发布失败");
+            }
             
             // 显示数据
             Serial.println("\n【当前读数】");
@@ -187,7 +233,41 @@ void loop() {
             Serial.println("  3. 传感器是否正常工作");
         }
         
-        Serial.println("----------------------------------------\n");
+        Serial.println("----------------------------------------");
+        
+        // ========== 6. 断开连接，释放资源 ==========
+        Serial.println("\n【清理阶段】断开连接并释放资源...");
+        
+        if (mqttManager) {
+            mqttManager->disconnect();
+            delay(100);
+            delete mqttManager;
+            mqttManager = nullptr;
+            Serial.println("  ✓ MQTT 已断开并释放");
+        }
+        
+        if (ntpSync) {
+            delete ntpSync;
+            ntpSync = nullptr;
+            Serial.println("  ✓ NTP 资源已释放");
+        }
+        
+        if (wifiManager) {
+            wifiManager->disconnect();
+            delay(100);
+            delete wifiManager;
+            wifiManager = nullptr;
+            Serial.println("  ✓ WiFi 已断开并释放");
+        }
+        
+        WiFi.disconnect(true);
+        delay(200);
+        ledState = false;
+        
+        Serial.println("\n========================================");
+        Serial.println("   数据采集周期结束，进入休眠模式");
+        Serial.println("   下次采集时间: " + String(READ_INTERVAL/1000) + " 秒后");
+        Serial.println("========================================\n");
     }
 }
 

@@ -9,7 +9,7 @@
 
 #include <Arduino.h>
 #include <PubSubClient.h>
-#include <WiFiClient.h>
+#include <WiFi.h>
 #include <ArduinoJson.h>
 
 // 回调函数类型定义
