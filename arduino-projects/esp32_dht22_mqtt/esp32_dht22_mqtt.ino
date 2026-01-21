@@ -15,8 +15,8 @@ bool ledState = false;
 void setupLED();
 void updateLED();
 void setupDHT22();
-void setupWifiManager();
-bool setupMqttManager();
+// void setupWifiManager();
+// bool setupMqttManager();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 // 全局对象
