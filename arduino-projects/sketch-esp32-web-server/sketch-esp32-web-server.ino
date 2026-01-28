@@ -106,6 +106,8 @@ void setup() {
     delay(3000);
     ESP.restart();
   }
+
+  // WiFi.setTxPower(WIFI_POWER_21dBm); // 把 ESP32 的 Wi‑Fi 发射功率设为 21 dBm（即大约 126 mW）
   
   // 2. 设置 Web 服务器 GPIO 控制
   webServer.setupGPIOControl(CONTROL_GPIO, true);

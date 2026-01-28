@@ -65,6 +65,11 @@ bool WiFiManager::connect(int timeout, int maxRetries, int retryDelay, WatchdogC
         // 配置WiFi模式
         WiFi.mode(WIFI_STA);
         WiFi.setSleep(false);  // 禁用WiFi省电模式
+
+        // 启用Wi-Fi自动重连机制
+        // WiFi.setAutoConnect(true);
+        // 启用DHCP以确保IP地址动态分配
+        WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
         
         // 如果已经连接，直接返回
         if (WiFi.status() == WL_CONNECTED) {
@@ -311,7 +316,9 @@ const char* NTPTimeSync::NTP_SERVERS[] = {
     "ntp.ntsc.ac.cn",       // 中国国家授时中心
     "ntp1.aliyun.com",      // 阿里云备用
     "pool.ntp.org",         // 国际NTP池
-    "time.nist.gov"         // NIST时间服务器
+    "time.nist.gov",         // NIST时间服务器
+    "time.asia.apple.com",
+    "time.apple.com"
 };
 
 const int NTPTimeSync::NTP_SERVER_COUNT = sizeof(NTP_SERVERS) / sizeof(NTP_SERVERS[0]);
@@ -368,7 +375,7 @@ bool NTPTimeSync::sync(const char* ntpServer, int retryCount) {
                     configTime(timezoneOffset, 0, servers[s]);
                     
                     // 等待时间同步
-                    int syncTimeout = 10000;  // 10秒超时
+                    int syncTimeout = 20000;  // 20秒超时
                     unsigned long startTime = millis();
                     
                     while (!isTimeSynced() && (millis() - startTime < syncTimeout)) {
