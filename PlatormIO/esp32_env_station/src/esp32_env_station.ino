@@ -16,8 +16,20 @@ enum class HumiditySensorKind : uint8_t {
     SHT3x = 2
 };
 
-// 板载为 SHT3x-DIS 时请选 SHT3x；真 SHT20 选 SHT20
-static constexpr HumiditySensorKind kHumiditySensor = HumiditySensorKind::DHT22;
+/** 启用的温湿度通道：可配置多项，每项单独读取并上传一条 state。
+ *  同一 HumiditySensorKind 在表中最多出现一次（共用同一驱动实例）。 */
+struct HumiditySensorSlot {
+    HumiditySensorKind kind;
+    int sensor_id;  // 上报 JSON 中的 sensor_id，多路时请使用不同值
+};
+
+// 按需取消注释以启用多路；I2C 上 SHT20(0x40) 与 SHT3x(0x44/0x45) 可同时存在
+static constexpr HumiditySensorSlot kHumiditySensors[] = {
+    {HumiditySensorKind::DHT22, 2},
+    {HumiditySensorKind::SHT3x, 7},
+};
+static constexpr size_t kHumiditySensorCount = sizeof(kHumiditySensors) / sizeof(kHumiditySensors[0]);
+static_assert(kHumiditySensorCount > 0, "kHumiditySensors must contain at least one entry");
 
 // 引脚定义
 const int DHT_PIN = 4;    // DHT22 单总线数据引脚
@@ -53,6 +65,178 @@ String gMqttClientId = "";
 const unsigned long READ_INTERVAL = 300000;  // 每 300 秒读取一次
 unsigned long lastReadTime = 0;
 
+static const char* sensorKindDisplayName(HumiditySensorKind k) {
+    switch (k) {
+        case HumiditySensorKind::DHT22:
+            return "DHT22";
+        case HumiditySensorKind::SHT20:
+            return "SHT20";
+        case HumiditySensorKind::SHT3x:
+            return "SHT3x-DIS";
+    }
+    return "?";
+}
+
+static const char* sensorKindMqttName(HumiditySensorKind k) {
+    switch (k) {
+        case HumiditySensorKind::DHT22:
+            return "dht22";
+        case HumiditySensorKind::SHT20:
+            return "sht20";
+        case HumiditySensorKind::SHT3x:
+            return "sht30";
+    }
+    return "unknown";
+}
+
+static bool humidityConfigUsesKind(HumiditySensorKind k) {
+    for (size_t i = 0; i < kHumiditySensorCount; ++i) {
+        if (kHumiditySensors[i].kind == k) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool readHumiditySensor(HumiditySensorKind kind, float& temperature, float& humidity) {
+    switch (kind) {
+        case HumiditySensorKind::DHT22:
+            if (!gDht22Sensor) {
+                return false;
+            }
+            if (!gDht22Sensor->read(3, 2000)) {
+                return false;
+            }
+            temperature = gDht22Sensor->getTemperature();
+            humidity = gDht22Sensor->getHumidity();
+            return true;
+        case HumiditySensorKind::SHT20:
+            if (!gSht20Sensor) {
+                return false;
+            }
+            if (!gSht20Sensor->read(3, 2000)) {
+                return false;
+            }
+            temperature = gSht20Sensor->getTemperature();
+            humidity = gSht20Sensor->getHumidity();
+            return true;
+        case HumiditySensorKind::SHT3x:
+            if (!gSht3xSensor) {
+                return false;
+            }
+            if (!gSht3xSensor->read(3, 2000)) {
+                return false;
+            }
+            temperature = gSht3xSensor->getTemperature();
+            humidity = gSht3xSensor->getHumidity();
+            return true;
+    }
+    return false;
+}
+
+static void printHumiditySensorStats(HumiditySensorKind kind) {
+    switch (kind) {
+        case HumiditySensorKind::DHT22:
+            if (!gDht22Sensor) {
+                return;
+            }
+            {
+                DHT22Sensor::Reading reading = gDht22Sensor->getLastReading();
+                if (reading.valid) {
+                    Serial.print("  时间戳: ");
+                    Serial.print(reading.timestamp);
+                    Serial.println(" ms");
+                }
+                DHT22Sensor::Statistics stats = gDht22Sensor->getStatistics();
+                Serial.println("\n【统计信息】");
+                Serial.print("  总读取次数: ");
+                Serial.println(stats.totalReads);
+                Serial.print("  错误次数: ");
+                Serial.println(stats.errors);
+                Serial.print("  成功率: ");
+                Serial.print(stats.successRate, 1);
+                Serial.println(" %");
+                Serial.print("  异常数据次数: ");
+                Serial.println(stats.anomalyCount);
+                Serial.print("  连续异常次数: ");
+                Serial.println(stats.consecutiveAnomalyCount);
+            }
+            break;
+        case HumiditySensorKind::SHT20:
+            if (!gSht20Sensor) {
+                return;
+            }
+            {
+                SHT20Sensor::Reading reading = gSht20Sensor->getLastReading();
+                if (reading.valid) {
+                    Serial.print("  时间戳: ");
+                    Serial.print(reading.timestamp);
+                    Serial.println(" ms");
+                }
+                SHT20Sensor::Statistics stats = gSht20Sensor->getStatistics();
+                Serial.println("\n【统计信息】");
+                Serial.print("  总读取次数: ");
+                Serial.println(stats.totalReads);
+                Serial.print("  错误次数: ");
+                Serial.println(stats.errors);
+                Serial.print("  成功率: ");
+                Serial.print(stats.successRate, 1);
+                Serial.println(" %");
+                Serial.print("  异常数据次数: ");
+                Serial.println(stats.anomalyCount);
+                Serial.print("  连续异常次数: ");
+                Serial.println(stats.consecutiveAnomalyCount);
+            }
+            break;
+        case HumiditySensorKind::SHT3x:
+            if (!gSht3xSensor) {
+                return;
+            }
+            {
+                SHT3xSensor::Reading reading = gSht3xSensor->getLastReading();
+                if (reading.valid) {
+                    Serial.print("  时间戳: ");
+                    Serial.print(reading.timestamp);
+                    Serial.println(" ms");
+                }
+                SHT3xSensor::Statistics stats = gSht3xSensor->getStatistics();
+                Serial.println("\n【统计信息】");
+                Serial.print("  总读取次数: ");
+                Serial.println(stats.totalReads);
+                Serial.print("  错误次数: ");
+                Serial.println(stats.errors);
+                Serial.print("  成功率: ");
+                Serial.print(stats.successRate, 1);
+                Serial.println(" %");
+                Serial.print("  异常数据次数: ");
+                Serial.println(stats.anomalyCount);
+                Serial.print("  连续异常次数: ");
+                Serial.println(stats.consecutiveAnomalyCount);
+            }
+            break;
+    }
+}
+
+static void printHumiditySensorFailureHints(HumiditySensorKind kind) {
+    switch (kind) {
+        case HumiditySensorKind::DHT22:
+            Serial.println("  1. DHT22 接线与供电（数据脚 GPIO " + String(DHT_PIN) + "）");
+            Serial.println("  2. 上拉电阻与线长");
+            break;
+        case HumiditySensorKind::SHT20:
+            Serial.println("  1. SHT20 I2C：SDA=GPIO " + String(SDA_PIN) +
+                           ", SCL=GPIO " + String(SCL_PIN) + "，共地，3.3V 供电");
+            Serial.println("  2. 地址是否为 0x40、接线是否松动");
+            break;
+        case HumiditySensorKind::SHT3x:
+            Serial.println("  1. SHT3x I2C：SDA=GPIO " + String(SDA_PIN) +
+                           ", SCL=GPIO " + String(SCL_PIN) + "，共地，3.3V 供电");
+            Serial.println("  2. 7位地址应为 0x44 或 0x45（与 ADDR 焊盘/跳线一致），当前配置 0x" +
+                           String(SHT3X_I2C_ADDR, HEX));
+            break;
+    }
+}
+
 void setup() {
   // 初始化串口
   Serial.begin(115200);
@@ -68,13 +252,16 @@ void setup() {
   Serial.println("   ESP32-C3 温湿度 MQTT System Starting  ");
   Serial.println("========================================");
   Serial.print("   当前传感器: ");
-  if (kHumiditySensor == HumiditySensorKind::DHT22) {
-    Serial.println("DHT22");
-  } else if (kHumiditySensor == HumiditySensorKind::SHT20) {
-    Serial.println("SHT20");
-  } else {
-    Serial.println("SHT3x-DIS");
+  for (size_t i = 0; i < kHumiditySensorCount; ++i) {
+      if (i > 0) {
+          Serial.print(", ");
+      }
+      Serial.print(sensorKindDisplayName(kHumiditySensors[i].kind));
+      Serial.print("(id=");
+      Serial.print(kHumiditySensors[i].sensor_id);
+      Serial.print(")");
   }
+  Serial.println();
   
   // 仅初始化必要的模块
   setupLED();
@@ -191,163 +378,104 @@ void loop() {
         Serial.println("【5/5】读取传感器数据并发布...");
         Serial.println("----------------------------------------");
         
-        bool readOk = false;
-        float temperature = NAN;
-        float humidity = NAN;
+        bool anyReadOk = false;
+        bool slotReadOk[kHumiditySensorCount];
+        float slotTemperature[kHumiditySensorCount];
+        float slotHumidity[kHumiditySensorCount];
+        String iso8601 = NTPTimeSync::getISO8601TimeWithTimezone(8);
+        String suffix_6 = get_str_last_n(gUniqueId, 6);
+        String s_topic = String(kDevice_Location) + String(kDevice_Type) + "_" + suffix_6 + "/state";
 
-        if (kHumiditySensor == HumiditySensorKind::DHT22) {
-            readOk = gDht22Sensor->read(3, 2000);
+        for (size_t si = 0; si < kHumiditySensorCount; ++si) {
+            HumiditySensorKind kind = kHumiditySensors[si].kind;
+            int sensorId = kHumiditySensors[si].sensor_id;
+            float temperature = NAN;
+            float humidity = NAN;
+            bool readOk = readHumiditySensor(kind, temperature, humidity);
+            slotReadOk[si] = readOk;
+            slotTemperature[si] = temperature;
+            slotHumidity[si] = humidity;
+
             if (readOk) {
-                temperature = gDht22Sensor->getTemperature();
-                humidity = gDht22Sensor->getHumidity();
-            }
-        } else if (kHumiditySensor == HumiditySensorKind::SHT20) {
-            readOk = gSht20Sensor->read(3, 2000);
-            if (readOk) {
-                temperature = gSht20Sensor->getTemperature();
-                humidity = gSht20Sensor->getHumidity();
-            }
-        } else {
-            readOk = gSht3xSensor->read(3, 2000);
-            if (readOk) {
-                temperature = gSht3xSensor->getTemperature();
-                humidity = gSht3xSensor->getHumidity();
+                anyReadOk = true;
+                temperature = ((int)(temperature * 100 + 0.5f)) / 100.0f;
+                humidity = ((int)(humidity * 100 + 0.5f)) / 100.0f;
+
+                const char* sensorName = sensorKindMqttName(kind);
+                StaticJsonDocument<256> state_doc;
+                state_doc["sensor_type"] = sensorName;
+                state_doc["sensor_id"] = sensorId;
+                state_doc["temperature"] = temperature;
+                state_doc["humidity"] = humidity;
+                state_doc["created_at"] = iso8601;
+
+                if (mqttManager->publishJson(s_topic.c_str(), state_doc)) {
+                    Serial.print("✓ ");
+                    Serial.print(sensorName);
+                    Serial.print(" (id=");
+                    Serial.print(sensorId);
+                    Serial.println(") 数据已发布");
+                } else {
+                    Serial.print("✗ ");
+                    Serial.print(sensorName);
+                    Serial.print(" (id=");
+                    Serial.print(sensorId);
+                    Serial.println(") 数据发布失败");
+                }
+            } else {
+                Serial.print("✗ ");
+                Serial.print(sensorKindDisplayName(kind));
+                Serial.print(" (id=");
+                Serial.print(sensorId);
+                Serial.println(") 读取失败");
             }
         }
 
-        if (readOk) {
-            temperature = ((int)(temperature * 100 + 0.5f)) / 100.0f;
-            humidity = ((int)(humidity * 100 + 0.5f)) / 100.0f;
-
-            const char* sensorName = "dht22";
-            if (kHumiditySensor == HumiditySensorKind::SHT20) {
-                sensorName = "sht20";
-            } else if (kHumiditySensor == HumiditySensorKind::SHT3x) {
-                sensorName = "sht3x";
-            }
-
-            StaticJsonDocument<256> dth22_doc;
-            dth22_doc["sensor_type"] = sensorName;
-            dth22_doc["sensor_id"] = 4;
-            dth22_doc["temperature"] = temperature;
-            dth22_doc["humidity"] = humidity;
-            String iso8601 = NTPTimeSync::getISO8601TimeWithTimezone(8);
-            dth22_doc["created_at"] = iso8601;
-            
-            // home/livingroom/env/ACA704D777EC/state
-            String suffix_6 = get_str_last_n(gUniqueId, 6);  // D777EC
-            String s_topic = String(kDevice_Location) + String(kDevice_Type) + "_" + suffix_6 + "/state";
-
-            if (mqttManager->publishJson(s_topic.c_str(), dth22_doc)) {
-                Serial.print("✓ ");
-                Serial.print(sensorName);
-                Serial.println(" 数据已发布");
-            } else {
-                Serial.print("✗ ");
-                Serial.print(sensorName);
-                Serial.println(" 数据发布失败");
-            }
-
-            // 发布Device info JSON消息
+        if (anyReadOk) {
             StaticJsonDocument<1024> all_dev_info = all_device_info();
             all_dev_info["created_at"] = iso8601;
-
-            // home/livingroom/env/esp32_D777EC/metrics
             String m_topic = String(kDevice_Location) + String(kDevice_Type) + "_" + suffix_6 + "/metrics";
-            
+
             if (mqttManager->publishJson(m_topic.c_str(), all_dev_info)) {
                 Serial.println("✓ 设备信息已发布");
             } else {
                 Serial.println("✗ 设备信息发布失败");
             }
-            
-            // 显示数据
+
             Serial.println("\n【当前读数】");
-            Serial.print("  温度: ");
-            Serial.print(temperature, 1);
-            Serial.println(" °C");
-            
-            Serial.print("  湿度: ");
-            Serial.print(humidity, 1);
-            Serial.println(" %");
-            
-            if (kHumiditySensor == HumiditySensorKind::DHT22) {
-                DHT22Sensor::Reading reading = gDht22Sensor->getLastReading();
-                if (reading.valid) {
-                    Serial.print("  时间戳: ");
-                    Serial.print(reading.timestamp);
-                    Serial.println(" ms");
+            for (size_t si = 0; si < kHumiditySensorCount; ++si) {
+                if (!slotReadOk[si]) {
+                    continue;
                 }
-                DHT22Sensor::Statistics stats = gDht22Sensor->getStatistics();
-                Serial.println("\n【统计信息】");
-                Serial.print("  总读取次数: ");
-                Serial.println(stats.totalReads);
-                Serial.print("  错误次数: ");
-                Serial.println(stats.errors);
-                Serial.print("  成功率: ");
-                Serial.print(stats.successRate, 1);
+                float temperature = ((int)(slotTemperature[si] * 100 + 0.5f)) / 100.0f;
+                float humidity = ((int)(slotHumidity[si] * 100 + 0.5f)) / 100.0f;
+                Serial.print("  [");
+                Serial.print(sensorKindDisplayName(kHumiditySensors[si].kind));
+                Serial.print(" id=");
+                Serial.print(kHumiditySensors[si].sensor_id);
+                Serial.print("] 温度: ");
+                Serial.print(temperature, 1);
+                Serial.print(" °C, 湿度: ");
+                Serial.print(humidity, 1);
                 Serial.println(" %");
-                Serial.print("  异常数据次数: ");
-                Serial.println(stats.anomalyCount);
-                Serial.print("  连续异常次数: ");
-                Serial.println(stats.consecutiveAnomalyCount);
-            } else if (kHumiditySensor == HumiditySensorKind::SHT20) {
-                SHT20Sensor::Reading reading = gSht20Sensor->getLastReading();
-                if (reading.valid) {
-                    Serial.print("  时间戳: ");
-                    Serial.print(reading.timestamp);
-                    Serial.println(" ms");
-                }
-                SHT20Sensor::Statistics stats = gSht20Sensor->getStatistics();
-                Serial.println("\n【统计信息】");
-                Serial.print("  总读取次数: ");
-                Serial.println(stats.totalReads);
-                Serial.print("  错误次数: ");
-                Serial.println(stats.errors);
-                Serial.print("  成功率: ");
-                Serial.print(stats.successRate, 1);
-                Serial.println(" %");
-                Serial.print("  异常数据次数: ");
-                Serial.println(stats.anomalyCount);
-                Serial.print("  连续异常次数: ");
-                Serial.println(stats.consecutiveAnomalyCount);
-            } else {
-                SHT3xSensor::Reading reading = gSht3xSensor->getLastReading();
-                if (reading.valid) {
-                    Serial.print("  时间戳: ");
-                    Serial.print(reading.timestamp);
-                    Serial.println(" ms");
-                }
-                SHT3xSensor::Statistics stats = gSht3xSensor->getStatistics();
-                Serial.println("\n【统计信息】");
-                Serial.print("  总读取次数: ");
-                Serial.println(stats.totalReads);
-                Serial.print("  错误次数: ");
-                Serial.println(stats.errors);
-                Serial.print("  成功率: ");
-                Serial.print(stats.successRate, 1);
-                Serial.println(" %");
-                Serial.print("  异常数据次数: ");
-                Serial.println(stats.anomalyCount);
-                Serial.print("  连续异常次数: ");
-                Serial.println(stats.consecutiveAnomalyCount);
             }
-            
+
+            Serial.println("\n【统计信息（各已启用传感器）】");
+            for (size_t si = 0; si < kHumiditySensorCount; ++si) {
+                HumiditySensorKind kind = kHumiditySensors[si].kind;
+                Serial.print("--- ");
+                Serial.print(sensorKindDisplayName(kind));
+                Serial.println(" ---");
+                printHumiditySensorStats(kind);
+            }
         } else {
-            Serial.println("\n❌ 读取失败！");
+            Serial.println("\n❌ 全部传感器读取失败！");
             Serial.println("请检查:");
-            if (kHumiditySensor == HumiditySensorKind::DHT22) {
-                Serial.println("  1. DHT22 接线与供电（数据脚 GPIO " + String(DHT_PIN) + "）");
-                Serial.println("  2. 上拉电阻与线长");
-            } else if (kHumiditySensor == HumiditySensorKind::SHT20) {
-                Serial.println("  1. SHT20 I2C：SDA=GPIO " + String(SDA_PIN) +
-                              ", SCL=GPIO " + String(SCL_PIN) + "，共地，3.3V 供电");
-                Serial.println("  2. 地址是否为 0x40、接线是否松动");
-            } else {
-                Serial.println("  1. SHT3x I2C：SDA=GPIO " + String(SDA_PIN) +
-                              ", SCL=GPIO " + String(SCL_PIN) + "，共地，3.3V 供电");
-                Serial.println("  2. 7位地址应为 0x44 或 0x45（与 ADDR 焊盘/跳线一致），当前配置 0x" +
-                              String(SHT3X_I2C_ADDR, HEX));
+            for (size_t si = 0; si < kHumiditySensorCount; ++si) {
+                Serial.print("[");
+                Serial.print(sensorKindDisplayName(kHumiditySensors[si].kind));
+                Serial.println("]");
+                printHumiditySensorFailureHints(kHumiditySensors[si].kind);
             }
             Serial.println("  3. 传感器本体是否损坏");
         }
@@ -391,15 +519,17 @@ void loop() {
 }
 
 void setupHumiditySensor() {
-  if (kHumiditySensor == HumiditySensorKind::DHT22) {
+  if (humidityConfigUsesKind(HumiditySensorKind::DHT22)) {
     gDht22Sensor = new DHT22Sensor((uint8_t)DHT_PIN, (int8_t)LED_PIN);
     Serial.println("[传感器] 已启用 DHT22，数据脚: GPIO " + String(DHT_PIN));
-  } else if (kHumiditySensor == HumiditySensorKind::SHT20) {
+  }
+  if (humidityConfigUsesKind(HumiditySensorKind::SHT20)) {
     gSht20Sensor =
         new SHT20Sensor((int8_t)SDA_PIN, (int8_t)SCL_PIN, (int8_t)LED_PIN);
     Serial.println("[传感器] 已启用 SHT20，SDA=GPIO " + String(SDA_PIN) +
                    ", SCL=GPIO " + String(SCL_PIN));
-  } else {
+  }
+  if (humidityConfigUsesKind(HumiditySensorKind::SHT3x)) {
     gSht3xSensor = new SHT3xSensor((int8_t)SDA_PIN, (int8_t)SCL_PIN, (int8_t)LED_PIN,
                                    SHT3X_I2C_ADDR);
     Serial.println("[传感器] 已启用 SHT3x-DIS，SDA=GPIO " + String(SDA_PIN) +

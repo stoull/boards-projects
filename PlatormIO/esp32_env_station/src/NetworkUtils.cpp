@@ -109,6 +109,10 @@ bool WiFiManager::connect(int timeout, int maxRetries, int retryDelay, WatchdogC
                 }
             }
 
+            // WIFI_POWER_8_5dBm makes the ESP32-C3 Supermini boards from Aliexpress(就是淘宝) more reliable on wifi
+            // ESP32-C3的发射功率默认较高，可能会导致连接不稳定。通过将发射功率限制在10-12dBm左右，可以提高连接的稳定性和可靠性。
+            // 注意：过低的发射功率可能会导致连接范围缩小，过高的发射功率可能会导致连接不稳定。根据实际环境和需求调整发射功率参数。
+            // https://www.reddit.com/r/esp32/comments/1fqx2ts/wifi_power_8_5dbm_makes_the_esp32c3_supermini/
             // 关键：将发射功率限制在10-12dBm左右 (参数范围0-84，推荐40)
             // esp_wifi_set_max_tx_power(40);  // 40对应大约10dBm
             WiFi.setTxPower(WIFI_POWER_8_5dBm);   // 8.5dBm，对应参数34
