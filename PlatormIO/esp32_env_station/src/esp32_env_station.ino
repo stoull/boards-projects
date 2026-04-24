@@ -31,6 +31,7 @@ bool ledState = false;
 void setupLED();
 void updateLED();
 void setupHumiditySensor();
+String buildMqttClientId();
 // void setupWifiManager();
 // bool setupMqttManager();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
@@ -46,6 +47,7 @@ DHT22Sensor* gDht22Sensor = nullptr;
 SHT20Sensor* gSht20Sensor = nullptr;
 SHT3xSensor* gSht3xSensor = nullptr;
 String gUniqueId = "";
+String gMqttClientId = "";
 
 // 读取间隔 (毫秒)
 const unsigned long READ_INTERVAL = 300000;  // 每 300 秒读取一次
@@ -56,6 +58,11 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   gUniqueId = get_unique_id();
+  unsigned long seed = 0;
+  for (size_t i = 0; i < gUniqueId.length(); ++i) {
+      seed = seed * 31 + (unsigned long)gUniqueId[i];
+  }
+  randomSeed(seed ^ micros());
   Serial.println();
   Serial.println("========================================");
   Serial.println("   ESP32-C3 温湿度 MQTT System Starting  ");
@@ -157,7 +164,9 @@ void loop() {
         
         // ========== 4. 重新连接 MQTT ==========
         Serial.println("【4/5】重新连接 MQTT...");
-        mqttManager = new MQTTClientManager(MQTT_CLIENT_ID, MQTT_SERVER, MQTT_PORT);
+        gMqttClientId = buildMqttClientId();
+        Serial.println("MQTT Client ID: " + gMqttClientId);
+        mqttManager = new MQTTClientManager(gMqttClientId.c_str(), MQTT_SERVER, MQTT_PORT);
         mqttManager->setAuth(MQTT_USER, MQTT_PASSWORD);
         
         if (!mqttManager->connect(3)) {
@@ -462,7 +471,9 @@ void setupWifiManager() {
 
 bool setupMqttManager() {
     // 创建MQTT客户端管理器
-    mqttManager = new MQTTClientManager(MQTT_CLIENT_ID, MQTT_SERVER, MQTT_PORT);
+    gMqttClientId = buildMqttClientId();
+    Serial.println("MQTT Client ID: " + gMqttClientId);
+    mqttManager = new MQTTClientManager(gMqttClientId.c_str(), MQTT_SERVER, MQTT_PORT);
     mqttManager -> setAuth(MQTT_USER, MQTT_PASSWORD);
     
     // 如果需要认证，设置用户名和密码
@@ -517,6 +528,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             // 在这里处理命令...
         }
     }
+}
+
+String buildMqttClientId() {
+    const char* charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const size_t charsetLen = 36;
+    String result = String(MQTT_CLIENT_ID_PRE);
+    result.reserve(result.length() + 12);
+
+    for (size_t i = 0; i < 12; ++i) {
+        result += charset[random(charsetLen)];
+    }
+
+    return result;
 }
 
 // ==================== LED控制函数 ====================

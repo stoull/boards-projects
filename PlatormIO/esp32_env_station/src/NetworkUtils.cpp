@@ -111,7 +111,7 @@ bool WiFiManager::connect(int timeout, int maxRetries, int retryDelay, WatchdogC
 
             // 关键：将发射功率限制在10-12dBm左右 (参数范围0-84，推荐40)
             // esp_wifi_set_max_tx_power(40);  // 40对应大约10dBm
-            // WiFi.setTxPower(WIFI_POWER_8_5dBm);   // 8.5dBm，对应参数34
+            WiFi.setTxPower(WIFI_POWER_8_5dBm);   // 8.5dBm，对应参数34
             
             // 开始连接
             log("正在连接到 WiFi: " + ssid + " (尝试 " + String(attempt) + ")");
