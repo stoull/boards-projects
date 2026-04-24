@@ -168,6 +168,7 @@ void loop() {
             StaticJsonDocument<256> dth22_doc;
             dth22_doc["temperature"] = temperature;
             dth22_doc["humidity"] = humidity;
+            dth22_doc["type"] = "dht22";
             String iso8601 = NTPTimeSync::getISO8601TimeWithTimezone(8);
             dth22_doc["created_at"] = iso8601;
             
@@ -180,6 +181,8 @@ void loop() {
             // 发布Device info JSON消息
             StaticJsonDocument<1024> all_dev_info = all_device_info();
             all_dev_info["created_at"] = iso8601;
+
+            String unique_id = all_dev_info["unique_id"]
             
             if (mqttManager->publishJson(MQTT_TOPIC_DeviceInfo, all_dev_info)) {
                 Serial.println("✓ 设备信息已发布");

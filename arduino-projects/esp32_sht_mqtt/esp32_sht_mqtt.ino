@@ -7,6 +7,7 @@
 #include "SHT3xSensor.h"
 #include "MQTTClientManager.h"
 #include "Secret.h"
+#include "Utils.h"
 
 /** 温湿度传感器类型：DHT22 / SHT20(0x40) / SHT3x-DIS(0x44 或 0x45) */
 enum class HumiditySensorKind : uint8_t {
@@ -16,7 +17,7 @@ enum class HumiditySensorKind : uint8_t {
 };
 
 // 板载为 SHT3x-DIS 时请选 SHT3x；真 SHT20 选 SHT20
-static constexpr HumiditySensorKind kHumiditySensor = HumiditySensorKind::SHT3x;
+static constexpr HumiditySensorKind kHumiditySensor = HumiditySensorKind::DHT22;
 
 // 引脚定义
 const int DHT_PIN = 4;    // DHT22 单总线数据引脚
@@ -44,6 +45,7 @@ MQTTClientManager* mqttManager = nullptr;
 DHT22Sensor* gDht22Sensor = nullptr;
 SHT20Sensor* gSht20Sensor = nullptr;
 SHT3xSensor* gSht3xSensor = nullptr;
+String gUniqueId = "";
 
 // 读取间隔 (毫秒)
 const unsigned long READ_INTERVAL = 300000;  // 每 300 秒读取一次
@@ -53,6 +55,7 @@ void setup() {
   // 初始化串口
   Serial.begin(115200);
   delay(100);
+  gUniqueId = get_unique_id();
   Serial.println();
   Serial.println("========================================");
   Serial.println("   ESP32-C3 温湿度 MQTT System Starting  ");
@@ -215,13 +218,18 @@ void loop() {
             }
 
             StaticJsonDocument<256> dth22_doc;
-            dth22_doc["sensor"] = sensorName;
+            dth22_doc["sensor_type"] = sensorName;
+            dth22_doc["sensor_id"] = 4;
             dth22_doc["temperature"] = temperature;
             dth22_doc["humidity"] = humidity;
             String iso8601 = NTPTimeSync::getISO8601TimeWithTimezone(8);
             dth22_doc["created_at"] = iso8601;
             
-            if (mqttManager->publishJson(MQTT_TOPIC, dth22_doc)) {
+            // home/livingroom/env/ACA704D777EC/state
+            String suffix_6 = get_str_last_n(gUniqueId, 6);  // D777EC
+            String s_topic = String(kDevice_Location) + String(kDevice_Type) + "_" + suffix_6 + "/state";
+
+            if (mqttManager->publishJson(s_topic.c_str(), dth22_doc)) {
                 Serial.print("✓ ");
                 Serial.print(sensorName);
                 Serial.println(" 数据已发布");
@@ -234,8 +242,11 @@ void loop() {
             // 发布Device info JSON消息
             StaticJsonDocument<1024> all_dev_info = all_device_info();
             all_dev_info["created_at"] = iso8601;
+
+            // home/livingroom/env/esp32_D777EC/metrics
+            String m_topic = String(kDevice_Location) + String(kDevice_Type) + "_" + suffix_6 + "/metrics";
             
-            if (mqttManager->publishJson(MQTT_TOPIC_DeviceInfo, all_dev_info)) {
+            if (mqttManager->publishJson(m_topic.c_str(), all_dev_info)) {
                 Serial.println("✓ 设备信息已发布");
             } else {
                 Serial.println("✗ 设备信息发布失败");
