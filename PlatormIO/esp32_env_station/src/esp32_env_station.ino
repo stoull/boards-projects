@@ -25,8 +25,8 @@ struct HumiditySensorSlot {
 
 // 按需取消注释以启用多路；I2C 上 SHT20(0x40) 与 SHT3x(0x44/0x45) 可同时存在
 static constexpr HumiditySensorSlot kHumiditySensors[] = {
-    {HumiditySensorKind::DHT22, 2},
-    {HumiditySensorKind::SHT3x, 7},
+    {HumiditySensorKind::DHT22, 3},
+    {HumiditySensorKind::SHT3x, 8},
 };
 static constexpr size_t kHumiditySensorCount = sizeof(kHumiditySensors) / sizeof(kHumiditySensors[0]);
 static_assert(kHumiditySensorCount > 0, "kHumiditySensors must contain at least one entry");
