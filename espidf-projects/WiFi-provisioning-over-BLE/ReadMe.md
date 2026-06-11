@@ -11,7 +11,7 @@
 ### 手机端测试（EspBlufi）
 
 1. 安装 [EspBlufi（Android）](https://github.com/EspressifApp/EspBlufi) 或 [EspBlufi（iOS）](https://apps.apple.com/cn/app/espblufi/id1450614082) — 为乐鑫官方配网 App，支持扫描、连接、加密、扫描 WiFi、下发 SSID/密码及查看连接状态。
-2. 打开蓝牙，扫描并连接名为 `DEVICE_SN` 的设备 — SN 在 `src/device_config.h` 中配置（默认 `HUT000001`），须与固件中 `DEVICE_SN` 一致。
+2. 打开蓝牙，扫描并连接名为 `DEVICE_SN` 的设备 — SN 在 `src/device/device_config.h` 中配置（默认 `ESP0000000`），须与固件中 SN 一致。
 3. 在 App 中刷新 WiFi 列表，选择 SSID 并输入密码 — 设备扫描周围 2.4GHz AP 并通过蓝牙回传列表，仅支持 STA 模式配网。
 4. 点击连接，App 会显示配网状态（connecting → success / fail） — 凭证写入 NVS，重启后可自动连网。
 
@@ -30,7 +30,7 @@
 | 蓝灯 | GPIO 8 | 低电平点亮 |
 | BOOT 键 | GPIO 9 | 按下为低，内部上拉 |
 
-引脚定义在 `src/board_config.h`，可按板子修改。 — GPIO 8/9 为 strapping 引脚，正常运行中作 LED/按键使用无妨，烧录时仍用 BOOT+RST 进下载模式。
+引脚定义在 `src/board/board_config.h`，可按板子修改。 — GPIO 8/9 为 strapping 引脚，正常运行中作 LED/按键使用无妨，烧录时仍用 BOOT+RST 进下载模式。
 
 ### BOOT 键（50ms 防抖）
 
@@ -61,10 +61,10 @@
 
 ### 新增/修改文件
 
-- `src/board_config.h` — 引脚与时间参数  
-- `src/status_led.c/h` — LED 状态机（LEDC 呼吸）  
-- `src/boot_button.c/h` — 按键防抖与长短按  
-- `src/main.c` — 与 BluFi 集成  
+- `src/board/board_config.h` — 引脚与时间参数  
+- `src/board/status_led.c/h` — LED 状态机（LEDC 呼吸）  
+- `src/board/boot_button.c/h` — 按键防抖与长短按  
+- `src/main.c` — 应用入口，与 BluFi 集成  
 - `platformio.ini` — 新增 `esp32c3_supermini` 环境 — 默认编译目标为 SuperMini，固件使用 `partitions_singleapp_large.csv` 以容纳 >1MB 的 BluFi 镜像。
 
 ### 编译烧录
@@ -173,8 +173,8 @@ App 发送 JSON 到自定义通道，设备以 JSON 回复。 — 走 BluFi 数�
 
 | 文件 | 说明 |
 |------|------|
-| `src/blufi_custom_cmd.c/h` | JSON 解析与命令处理 |
-| `src/device_config.h` | 新增 `FIRMWARE_VERSION` |
+| `src/blufi/blufi_custom_cmd.c/h` | JSON 解析与命令处理 |
+| `src/device/device_config.h` | 新增 `FIRMWARE_VERSION` |
 | `src/main.c` | 处理 `ESP_BLUFI_EVENT_RECV_CUSTOM_DATA` |
 
 固件版本在 `device_config.h` 中修改 `FIRMWARE_VERSION` 即可。 — 设备 SN 同文件中的 `DEVICE_SN`，修改后需重新编译烧录。

@@ -28,7 +28,7 @@
 
 ## Broker 配置
 
-### 编译时默认（`src/device_config.h`）
+### 编译时默认（`src/device/device_config.h`）
 
 ```c
 #define MQTT_BROKER_HOST_DEFAULT "broker.emqx.io"
@@ -154,9 +154,9 @@ mosquitto_pub -h broker.emqx.io -t "device/HUT000001/cmd" \
 
 | 文件 | 说明 |
 |------|------|
-| `src/mqtt_service.c/h` | MQTT 连接、Topic 订阅、响应发布 |
-| `src/mqtt_config.c/h` | Broker 配置（NVS） |
-| `src/blufi_custom_cmd.c/h` | JSON 命令解析与处理（蓝牙/MQTT 共用） |
-| `src/device_config.h` | 默认 SN、Broker 配置 |
+| `src/mqtt/mqtt_service.c/h` | MQTT 连接、Topic 订阅、响应发布 |
+| `src/mqtt/mqtt_config.c/h` | Broker 配置（NVS） |
+| `src/blufi/blufi_custom_cmd.c/h` | JSON 命令解析与处理（蓝牙/MQTT 共用） |
+| `src/device/device_config.h` | 默认 SN、Broker 配置 |
 
 蓝牙侧命令详细说明见项目 `ReadMe.md` 中「CUSTOM_DATA」章节。
