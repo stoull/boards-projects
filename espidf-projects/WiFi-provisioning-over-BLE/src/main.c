@@ -23,6 +23,7 @@
 #include "boot_button.h"
 #include "board_config.h"
 #include "blufi_custom_cmd.h"
+#include "device_sn.h"
 
 #define INVALID_REASON 255
 #define INVALID_RSSI   -128
@@ -200,6 +201,24 @@ static void enter_force_provisioning_mode(void)
     BLUFI_INFO("Force provisioning mode: WiFi disconnected, BLE enabled");
 }
 
+static esp_err_t apply_device_sn(const char *sn)
+{
+    esp_err_t err = device_sn_set(sn);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (blufi_host_ready) {
+        esp_blufi_update_ble_device_name(device_sn_get());
+        if (ble_enabled && !ble_is_connected) {
+            esp_blufi_adv_stop();
+            esp_blufi_adv_start();
+            ble_adv_idle_timer_start();
+        }
+    }
+    return ESP_OK;
+}
+
 static void device_reboot(void)
 {
     BLUFI_INFO("Reboot requested via custom command");
@@ -208,13 +227,13 @@ static void device_reboot(void)
 
 static void factory_reset_and_reboot(void)
 {
-    BLUFI_INFO("Factory reset: erasing NVS and rebooting");
+    BLUFI_INFO("Factory reset: erasing NVS (SN preserved if written) and rebooting");
     esp_wifi_disconnect();
     ble_stop_all();
 
-    esp_err_t err = nvs_flash_erase();
+    esp_err_t err = device_sn_factory_reset_preserve();
     if (err != ESP_OK) {
-        BLUFI_ERROR("NVS erase failed: %s", esp_err_to_name(err));
+        BLUFI_ERROR("Factory reset failed: %s", esp_err_to_name(err));
     }
     esp_restart();
 }
@@ -237,7 +256,7 @@ static void handle_custom_data(esp_blufi_cb_param_t *param)
     };
 
     blufi_custom_cmd_handle(param->custom_data.data, param->custom_data.data_len,
-                            &status, device_reboot, factory_reset_and_reboot);
+                            &status, device_reboot, factory_reset_and_reboot, apply_device_sn);
 }
 
 static void on_boot_button_short_press(void)
@@ -397,7 +416,7 @@ static void blufi_event_callback(esp_blufi_cb_event_t event, esp_blufi_cb_param_
     switch (event) {
     case ESP_BLUFI_EVENT_INIT_FINISH:
         blufi_host_ready = true;
-        BLUFI_INFO("BluFi init done, advertising as '%s'", DEVICE_SN);
+        BLUFI_INFO("BluFi init done, advertising as '%s'", device_sn_get());
         ble_start_advertising();
         app_update_led();
         break;
@@ -517,9 +536,11 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    ESP_ERROR_CHECK(device_sn_init());
+
     status_led_init();
 
-    BLUFI_INFO("Device SN (BLE name): %s", DEVICE_SN);
+    BLUFI_INFO("Device SN (BLE name): %s", device_sn_get());
 
     initialise_wifi();
 

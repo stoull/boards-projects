@@ -4,7 +4,7 @@
 #include "esp_log.h"
 #include "esp_blufi.h"
 #include "blufi_example.h"
-#include "device_config.h"
+#include "device_sn.h"
 #if CONFIG_BT_CONTROLLER_ENABLED || !CONFIG_BT_NIMBLE_ENABLED
 #include "esp_bt.h"
 #endif
@@ -41,7 +41,7 @@ esp_err_t esp_blufi_host_init(void)
     }
     BLUFI_INFO("BD ADDR: " ESP_BD_ADDR_STR "\n", ESP_BD_ADDR_HEX(esp_bt_dev_get_address()));
 
-    ret = esp_ble_gap_set_device_name(DEVICE_SN);
+    ret = esp_ble_gap_set_device_name(device_sn_get());
     if (ret) {
         BLUFI_ERROR("%s set device name failed: %s\n", __func__, esp_err_to_name(ret));
         return ESP_FAIL;
@@ -194,7 +194,7 @@ esp_err_t esp_blufi_host_init(void)
     assert(rc == 0);
 
 #if CONFIG_BT_NIMBLE_GAP_SERVICE
-    rc = ble_svc_gap_device_name_set(DEVICE_SN);
+    rc = ble_svc_gap_device_name_set(device_sn_get());
     assert(rc == 0);
 #endif
 
@@ -264,3 +264,25 @@ esp_err_t esp_blufi_host_and_cb_init(esp_blufi_callbacks_t *example_callbacks)
 }
 
 #endif /* CONFIG_BT_NIMBLE_ENABLED */
+
+esp_err_t esp_blufi_update_ble_device_name(const char *name)
+{
+    if (!name || name[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+#ifdef CONFIG_BT_BLUEDROID_ENABLED
+    return esp_ble_gap_set_device_name(name);
+#endif
+
+#ifdef CONFIG_BT_NIMBLE_ENABLED
+#if CONFIG_BT_NIMBLE_GAP_SERVICE
+    int rc = ble_svc_gap_device_name_set(name);
+    return rc == 0 ? ESP_OK : ESP_FAIL;
+#else
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+#endif
+
+    return ESP_ERR_NOT_SUPPORTED;
+}

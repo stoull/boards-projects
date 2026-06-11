@@ -1,7 +1,7 @@
 #pragma once
 
-/* 设备序列号：烧录前请修改为实际 SN，手机 EspBlufi 通过此名称扫描并连接 */
-#define DEVICE_SN "HUT000001"
+/* 未写入 NVS 时使用的默认序列号（蓝牙广播名） */
+#define DEVICE_SN_DEFAULT "ESP0000000"
 
 #define FIRMWARE_VERSION "1.0.0"
 

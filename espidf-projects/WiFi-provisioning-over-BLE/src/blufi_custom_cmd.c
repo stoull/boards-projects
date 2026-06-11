@@ -4,9 +4,11 @@
 #include <string.h>
 
 #include "device_config.h"
+#include "device_sn.h"
 
 #include "cJSON.h"
 #include "esp_blufi_api.h"
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -71,7 +73,7 @@ static void handle_get_info(const char *cmd, const blufi_custom_status_t *st)
 
     cJSON_AddBoolToObject(root, "ok", true);
     cJSON_AddStringToObject(root, "cmd", cmd);
-    cJSON_AddStringToObject(root, "sn", DEVICE_SN);
+    cJSON_AddStringToObject(root, "sn", device_sn_get());
     cJSON_AddStringToObject(root, "fw_version", FIRMWARE_VERSION);
     cJSON_AddNumberToObject(root, "uptime_ms", (double)(esp_timer_get_time() / 1000));
 
@@ -128,6 +130,43 @@ static void handle_reboot(const char *cmd, blufi_custom_action_fn_t reboot)
     }
 }
 
+static void handle_set_sn(const char *cmd, cJSON *root, blufi_custom_set_sn_fn_t set_sn)
+{
+    cJSON *sn_item = cJSON_GetObjectItem(root, "sn");
+    if (!cJSON_IsString(sn_item) || !sn_item->valuestring || sn_item->valuestring[0] == '\0') {
+        send_error(cmd, "missing_sn", "field 'sn' is required (1-20 chars, A-Z a-z 0-9 - _)");
+        return;
+    }
+
+    if (!set_sn) {
+        send_error(cmd, "not_supported", "set_sn handler not available");
+        return;
+    }
+
+    esp_err_t err = set_sn(sn_item->valuestring);
+    if (err == ESP_ERR_INVALID_ARG) {
+        send_error(cmd, "invalid_sn", "sn must be 1-20 chars: A-Z a-z 0-9 - _");
+        return;
+    }
+    if (err != ESP_OK) {
+        send_error(cmd, "save_failed", esp_err_to_name(err));
+        return;
+    }
+
+    cJSON *resp = cJSON_CreateObject();
+    if (!resp) {
+        return;
+    }
+    cJSON_AddBoolToObject(resp, "ok", true);
+    cJSON_AddStringToObject(resp, "cmd", cmd);
+    cJSON_AddStringToObject(resp, "sn", device_sn_get());
+    cJSON_AddStringToObject(resp, "message", "SN saved, BLE name updated");
+    char *out = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    send_custom_json(out);
+    cJSON_free(out);
+}
+
 static void handle_factory_reset(const char *cmd, blufi_custom_action_fn_t factory_reset)
 {
     cJSON *root = cJSON_CreateObject();
@@ -150,7 +189,8 @@ static void handle_factory_reset(const char *cmd, blufi_custom_action_fn_t facto
 void blufi_custom_cmd_handle(const uint8_t *data, uint32_t len,
                              const blufi_custom_status_t *status,
                              blufi_custom_action_fn_t reboot,
-                             blufi_custom_action_fn_t factory_reset)
+                             blufi_custom_action_fn_t factory_reset,
+                             blufi_custom_set_sn_fn_t set_sn)
 {
     if (!data || len == 0) {
         send_error(NULL, "invalid_request", "empty payload");
@@ -189,8 +229,10 @@ void blufi_custom_cmd_handle(const uint8_t *data, uint32_t len,
         handle_reboot(cmd, reboot);
     } else if (strcmp(cmd, "factory_reset") == 0) {
         handle_factory_reset(cmd, factory_reset);
+    } else if (strcmp(cmd, "set_sn") == 0) {
+        handle_set_sn(cmd, root, set_sn);
     } else {
-        send_error(cmd, "unknown_cmd", "supported: get_info, reboot, factory_reset");
+        send_error(cmd, "unknown_cmd", "supported: get_info, set_sn, reboot, factory_reset");
     }
 
     cJSON_Delete(root);
