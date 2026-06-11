@@ -17,6 +17,7 @@
 
 #include "esp_blufi_api.h"
 #include "blufi_example.h"
+#include "cJSON.h"
 #include "device_config.h"
 #include "esp_blufi.h"
 #include "status_led.h"
@@ -24,6 +25,8 @@
 #include "board_config.h"
 #include "blufi_custom_cmd.h"
 #include "device_sn.h"
+#include "mqtt_config.h"
+#include "mqtt_service.h"
 
 #define INVALID_REASON 255
 #define INVALID_RSSI   -128
@@ -208,6 +211,8 @@ static esp_err_t apply_device_sn(const char *sn)
         return err;
     }
 
+    mqtt_service_resubscribe_device_cmd();
+
     if (blufi_host_ready) {
         esp_blufi_update_ble_device_name(device_sn_get());
         if (ble_enabled && !ble_is_connected) {
@@ -228,6 +233,7 @@ static void device_reboot(void)
 static void factory_reset_and_reboot(void)
 {
     BLUFI_INFO("Factory reset: erasing NVS (SN preserved if written) and rebooting");
+    mqtt_service_stop();
     esp_wifi_disconnect();
     ble_stop_all();
 
@@ -238,25 +244,94 @@ static void factory_reset_and_reboot(void)
     esp_restart();
 }
 
-static void handle_custom_data(esp_blufi_cb_param_t *param)
+static void mqtt_send_response(void *ctx, const char *json)
 {
-    char ssid_buf[33] = {0};
-    if (sta_ssid_len > 0) {
-        memcpy(ssid_buf, sta_ssid, sta_ssid_len < 32 ? sta_ssid_len : 32);
+    (void)ctx;
+    if (!json) {
+        return;
+    }
+    esp_err_t err = mqtt_service_publish_response(json);
+    if (err != ESP_OK) {
+        BLUFI_ERROR("MQTT response publish failed: %s", esp_err_to_name(err));
+    }
+}
+
+static blufi_custom_channel_t s_mqtt_channel = {
+    .send_response = mqtt_send_response,
+    .send_ctx = NULL,
+};
+
+static void build_custom_status(blufi_custom_status_t *status, char *ssid_buf, size_t ssid_buf_len)
+{
+    if (ssid_buf && ssid_buf_len > 0) {
+        ssid_buf[0] = '\0';
+        if (sta_ssid_len > 0) {
+            memcpy(ssid_buf, sta_ssid, sta_ssid_len < ssid_buf_len - 1 ? sta_ssid_len : ssid_buf_len - 1);
+        }
     }
 
-    blufi_custom_status_t status = {
+    mqtt_service_status_t mqtt_status;
+    mqtt_service_get_status(&mqtt_status);
+
+    *status = (blufi_custom_status_t){
         .ble_enabled = ble_enabled,
         .ble_connected = ble_is_connected,
         .wifi_connected = sta_connected,
         .wifi_got_ip = sta_got_ip,
         .wifi_connecting = sta_is_connecting,
         .force_provisioning = force_provisioning_mode,
-        .wifi_ssid = ssid_buf[0] ? ssid_buf : NULL,
+        .wifi_ssid = (ssid_buf && ssid_buf[0]) ? ssid_buf : NULL,
+        .mqtt = mqtt_status,
     };
+}
+
+static void on_mqtt_message(const char *topic, const char *payload, int payload_len)
+{
+    if (!topic || !payload || payload_len < 0) {
+        return;
+    }
+
+    if (mqtt_service_is_device_cmd_topic(topic)) {
+        BLUFI_INFO("handle mqtt cmd: %.*s", payload_len, payload);
+        blufi_custom_status_t status;
+        char ssid_buf[33] = {0};
+        build_custom_status(&status, ssid_buf, sizeof(ssid_buf));
+
+        blufi_custom_cmd_handle((const uint8_t *)payload, (uint32_t)payload_len,
+                                &status, device_reboot, factory_reset_and_reboot, apply_device_sn,
+                                &s_mqtt_channel);
+        return;
+    }
+
+    if (!ble_is_connected) {
+        return;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        return;
+    }
+    cJSON_AddStringToObject(root, "event", "mqtt_message");
+    cJSON_AddStringToObject(root, "topic", topic);
+    if (payload && payload_len >= 0) {
+        cJSON_AddStringToObject(root, "payload", payload);
+    }
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (out) {
+        esp_blufi_send_custom_data((uint8_t *)out, (uint32_t)strlen(out));
+        cJSON_free(out);
+    }
+}
+
+static void handle_custom_data(esp_blufi_cb_param_t *param)
+{
+    blufi_custom_status_t status;
+    char ssid_buf[33] = {0};
+    build_custom_status(&status, ssid_buf, sizeof(ssid_buf));
 
     blufi_custom_cmd_handle(param->custom_data.data, param->custom_data.data_len,
-                            &status, device_reboot, factory_reset_and_reboot, apply_device_sn);
+                            &status, device_reboot, factory_reset_and_reboot, apply_device_sn, NULL);
 }
 
 static void on_boot_button_short_press(void)
@@ -294,6 +369,7 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base, int32_t eve
     force_provisioning_mode = false;
     send_wifi_status_report();
     app_update_led();
+    mqtt_service_start();
     BLUFI_INFO("Got IP, WiFi connected to %.*s", sta_ssid_len, sta_ssid);
 }
 
@@ -333,6 +409,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
 
         sta_connected = false;
         sta_got_ip = false;
+        mqtt_service_stop();
         memset(sta_ssid, 0, sizeof(sta_ssid));
         memset(sta_bssid, 0, sizeof(sta_bssid));
         sta_ssid_len = 0;
@@ -537,6 +614,8 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     ESP_ERROR_CHECK(device_sn_init());
+    ESP_ERROR_CHECK(mqtt_config_init());
+    ESP_ERROR_CHECK(mqtt_service_init(on_mqtt_message));
 
     status_led_init();
 
